@@ -1,0 +1,100 @@
+/*
+  # Initial Schema Setup for Customer Support SaaS
+
+  1. New Tables
+    - `profiles`
+      - `id` (uuid, primary key)
+      - `user_id` (uuid, references auth.users)
+      - `role` (text)
+      - `created_at` (timestamp)
+    
+    - `tickets`
+      - `id` (uuid, primary key)
+      - `title` (text)
+      - `description` (text)
+      - `priority` (text)
+      - `status` (text)
+      - `category` (text)
+      - `user_id` (uuid, references auth.users)
+      - `agent_id` (uuid, references auth.users)
+      - `created_at` (timestamp)
+      - `updated_at` (timestamp)
+
+  2. Security
+    - Enable RLS on all tables
+    - Add policies for authenticated users
+*/
+
+-- Create profiles table
+CREATE TABLE IF NOT EXISTS profiles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES auth.users NOT NULL,
+  role text NOT NULL DEFAULT 'customer',
+  created_at timestamptz DEFAULT now(),
+  CONSTRAINT valid_role CHECK (role IN ('admin', 'agent', 'customer'))
+);
+
+-- Create tickets table
+CREATE TABLE IF NOT EXISTS tickets (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  description text NOT NULL,
+  priority text NOT NULL DEFAULT 'medium',
+  status text NOT NULL DEFAULT 'open',
+  category text NOT NULL,
+  user_id uuid REFERENCES auth.users NOT NULL,
+  agent_id uuid REFERENCES auth.users,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  CONSTRAINT valid_priority CHECK (priority IN ('high', 'medium', 'low')),
+  CONSTRAINT valid_status CHECK (status IN ('open', 'in_progress', 'resolved'))
+);
+
+-- Enable RLS
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
+
+-- Profiles policies
+CREATE POLICY "Users can read own profile"
+  ON profiles
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own profile"
+  ON profiles
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+-- Tickets policies
+CREATE POLICY "Customers can read own tickets"
+  ON tickets
+  FOR SELECT
+  TO authenticated
+  USING (
+    auth.uid() = user_id OR
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid()
+      AND role IN ('admin', 'agent')
+    )
+  );
+
+CREATE POLICY "Customers can create tickets"
+  ON tickets
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Agents and admins can update tickets"
+  ON tickets
+  FOR UPDATE
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM profiles
+      WHERE user_id = auth.uid()
+      AND role IN ('admin', 'agent')
+    )
+  );
